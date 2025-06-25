@@ -1,191 +1,121 @@
-"""Define a custom Reasoning and Action agent.
+"""Graphs that extract memories on a schedule."""
 
-Works with a chat model with tool calling support.
-"""
+import asyncio
+import logging
+from datetime import datetime
 
-from datetime import UTC, datetime
-from typing import Dict, List, Literal, cast
-
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langgraph.graph import StateGraph
+from langchain.chat_models import init_chat_model
+from langchain_core.runnables import RunnableConfig
+from langgraph.graph import END, StateGraph
+from langgraph.store.base import BaseStore
 from langgraph.prebuilt import ToolNode
-from langgraph.types import Command, interrupt
 
-from react_agent.configuration import Configuration
-from react_agent.state import InputState, State
-from react_agent.tools import TOOLS
-from react_agent.utils import load_chat_model
+from react_agent import configuration, tools, utils
+from react_agent.state import State
+from react_agent.utils import split_model_and_provider
 
-# Define the function that calls the model
+logger = logging.getLogger(__name__)
+
+# Initialize the language model to be used for memory extraction
+tool_node = ToolNode([tools.get_weather, tools.get_news, tools.get_joke])
 
 
-async def call_model(state: State) -> Dict[str, List[AIMessage]]:
-    """Call the LLM powering our "agent".
+def call_model(state: State, config: RunnableConfig) -> dict:
+    """Extract the user's state from the conversation and update the memory."""
+    configurable = configuration.Configuration.from_runnable_config(config)
+    print(f"Using configuration: {configurable}")
 
-    This function prepares the prompt, initializes the model, and processes the response.
+#     # Retrieve the most recent memories for context
+#     memories = await store.asearch(
+#         ("memories", configurable.user_id),
+#         query=str([m.content for m in state.messages[-3:]]),
+#         limit=10,
+#     )
 
-    Args:
-        state (State): The current state of the conversation.
-        config (RunnableConfig): Configuration for the model run.
+#     # Format memories for inclusion in the prompt
+#     formatted = "\n".join(f"[{mem.key}]: {mem.value} (similarity: {mem.score})" for mem in memories)
+#     if formatted:
+#         formatted = f"""
+# <memories>
+# {formatted}
+# </memories>"""
 
-    Returns:
-        dict: A dictionary containing the model's response message.
-    """
-    configuration = Configuration.from_context()
+    # # Prepare the system prompt with user memories and current time
+    # # This helps the model understand the context and temporal relevance
+    # sys = configurable.system_prompt.format(
+    #     user_info=formatted, time=datetime.now().isoformat()
+    # )
 
-    # Initialize the model with tool binding. Change the model or add more tools here.
-    model = load_chat_model(configuration.model,
-                            base_url=configuration.base_url).bind_tools(TOOLS)
+    # Invoke the language model with the prepared prompt and tools
+    # "bind_tools" gives the LLM the JSON schema for all tools in the list so it knows how
+    # to use them.
 
-    # Format the system prompt. Customize this to change the agent's behavior.
-    system_message = configuration.system_prompt.format(
-        system_time=datetime.now(tz=UTC).isoformat()
+    sys = configurable.system_prompt.format(time=datetime.now().isoformat())
+
+    # print(utils.split_model_and_provider(configurable.model))
+    llm = init_chat_model(**utils.split_model_and_provider(configurable.model))
+    
+    msg = llm.bind_tools([tools.get_weather, tools.get_news, tools.get_joke]).invoke(
+        [{"role": "system", "content": sys}, *state.messages],
+        # {"configurable": utils.split_model_and_provider(configurable.model)},
     )
+    return {"messages": [msg]}
 
-    # Get the model's response
-    response = cast(
-        AIMessage,
-        await model.ainvoke(
-            [{"role": "system", "content": system_message}, *state.messages]
-        ),
-    )
 
-    # Handle the case when it's the last step and the model still wants to use a tool
-    if state.is_last_step and response.tool_calls:
-        return {
-            "messages": [
-                AIMessage(
-                    id=response.id,
-                    content="Sorry, I could not find an answer to your question in the specified number of steps.",
-                )
-            ]
-        }
+# def tool_action(state: State, config: RunnableConfig):
+#     """Define the action to take when a tool is called."""
+#     last_message = state.messages[-1]
+#     toll_calls = last_message.tool_calls[0]
 
-    # Return the model's response as a list to be added to existing messages
-    return {"messages": [response]}
+#     return tools.upsert_memory
 
-def human_review_node(state: State) -> Command[Literal["call_model", "tools"]]:
-    """Handle human review of the model's output.
+# async def store_memory(state: State, config: RunnableConfig, *, store: BaseStore):
+#     # Extract tool calls from the last message
+#     tool_calls = state.messages[-1].tool_calls
 
-    This function is a placeholder for human review logic. It currently returns the
-    model's output without any modifications.
+#     # Concurrently execute all upsert_memory calls
+#     saved_memories = await asyncio.gather(
+#         *(
+#             tools.upsert_memory(**tc["args"], config=config, store=store)
+#             for tc in tool_calls
+#         )
+#     )
 
-    Args:
-        state (State): The current state of the conversation.
+#     # Format the results of memory storage operations
+#     # This provides confirmation to the model that the actions it took were completed
+#     results = [
+#         {
+#             "role": "tool",
+#             "content": mem,
+#             "tool_call_id": tc["id"],
+#         }
+#         for tc, mem in zip(tool_calls, saved_memories)
+#     ]
+#     return {"messages": results}
 
-    Returns:
-        Command: A command to continue the conversation with the model's output.
-    """
-    # In a real implementation, this would involve human review logic
-    last_message = state.messages[-1]
-    tool_call = last_message.tool_calls[0]
 
-    # 这是用于提供给用户确信的信息，通过Command来实现(resume=<human_review>)
-    human_review = interrupt(
-        {
-            "question": "工具调用正确吗？",
-            "tool_call": tool_call
-        }
-    )
+def route_message(state: State):
+    """Determine the next step based on the presence of tool calls."""
+    msg = state.messages[-1]
+    if msg.tool_calls:
+        # If there are tool calls, we need to store memories
+        return "tool_node"
+    # Otherwise, finish; user can send the next message
+    return "__end__"
 
-    review_action = human_review["action"]
-    review_data = human_review.get("data")
 
-    # 如果用户同意执行
-    if review_action == "continue":
-        # 这里可以添加更多的逻辑来处理用户的反馈
-        return Command(goto="tools")
-    elif review_action == "update":
-        updated_message = AIMessage(
-            id=last_message.id,
-            content=last_message.content,
-            tool_calls=[{
-                "id": tool_call["id"],
-                "name": tool_call["name"],
-                # 这里使用人工更新的参数执行
-                "args": review_data,
-            }],
-        )
-        return Command(
-            goto="tools",
-            update={"messages": [updated_message]})
-    elif review_action == "feedback":
-        tool_message = ToolMessage(content = review_data,
-                                   tool_call_id = tool_call["id"],
-                                   name = tool_call["name"])
-        return Command(goto="call_model",
-                       update={"messages": [tool_message]})
-    else:
-        updated_message = HumanMessage(content=f"拒绝调用工具{tool_call['name']}")
-        return Command(goto="call_model",
-                       update={"messages": [updated_message]}) 
+# Create the graph + all nodes
+builder = StateGraph(State, config_schema=configuration.Configuration)
 
-# Define a new graph
-
-def subgraph_node(state:State):
-    return Command(
-        goto="__end__",
-        update={
-            "messages": [
-                AIMessage(
-                    content="子图执行完毕，返回主图继续执行"
-                )
-            ]
-        }
-    )
-
-builder = StateGraph(State, input=InputState, config_schema=Configuration)
-subgraph_builder = StateGraph(State)
-subgraph_builder.add_node("subgraph_node", subgraph_node)
-subgraph_builder.add_edge("__start__", "subgraph_node")
-subgraph = subgraph_builder.compile(name="subgraph")
-
-# Define the two nodes we will cycle between
-builder.add_node(call_model)
-builder.add_node("human_review", human_review_node)
-builder.add_node("tools", ToolNode(TOOLS))
-builder.add_node("subgraph", subgraph)
-
-# Set the entrypoint as `call_model`
-# This means that this node is the first one called
+# Define the flow of the memory extraction process
+builder.add_node("call_model", call_model)
+builder.add_node("tool_node", tool_node)
 builder.add_edge("__start__", "call_model")
+builder.add_edge("tool_node", "call_model")
+builder.add_conditional_edges("call_model", route_message, ["tool_node", "__end__"])
+
+graph = builder.compile()
+graph.name = "react_copilot"
 
 
-def route_model_output(state: State) -> Literal["subgraph", "human_review"]:
-    """Determine the next node based on the model's output.
-
-    This function checks if the model's last message contains tool calls.
-
-    Args:
-        state (State): The current state of the conversation.
-
-    Returns:
-        str: The name of the next node to call ("subgraph" or "human_review").
-    """
-    last_message = state.messages[-1]
-    if not isinstance(last_message, AIMessage):
-        raise ValueError(
-            f"Expected AIMessage in output edges, but got {type(last_message).__name__}"
-        )
-    # If there is no tool call, then we finish
-    if not last_message.tool_calls:
-        return "subgraph"
-    # Otherwise we execute the requested actions
-    return "human_review"
-
-
-# Add a conditional edge to determine the next step after `call_model`
-builder.add_conditional_edges(
-    "call_model",
-    # After call_model finishes running, the next node(s) are scheduled
-    # based on the output from route_model_output
-    route_model_output,
-)
-
-# Add a normal edge from `tools` to `call_model`
-# This creates a cycle: after using tools, we always return to the model
-builder.add_edge("tools", "call_model")
-builder.add_edge("subgraph", "__end__")
-
-# Compile the builder into an executable graph
-graph = builder.compile(name="ReAct Agent")
+__all__ = ["graph"]

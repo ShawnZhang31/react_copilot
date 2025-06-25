@@ -1,27 +1,65 @@
-"""Utility & helper functions."""
+import os
+from dotenv import load_dotenv
 
-from langchain.chat_models import init_chat_model
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage
+"""Utility functions used in our graph."""
 
 
-def get_message_text(msg: BaseMessage) -> str:
-    """Get the text content of a message."""
-    content = msg.content
-    if isinstance(content, str):
-        return content
-    elif isinstance(content, dict):
-        return content.get("text", "")
+def split_model_and_provider(fully_specified_name: str) -> dict:
+    """Initialize the configured chat model."""
+    if ":" in fully_specified_name:
+        provider, model = fully_specified_name.split(":", maxsplit=1)
     else:
-        txts = [c if isinstance(c, str) else (c.get("text") or "") for c in content]
-        return "".join(txts).strip()
+        provider = "openai"
+        model = fully_specified_name
+    
+    env_vars = get_openai_env_vars()
+    
+    if provider == "deepseek":
+        if not env_vars["api_key"]:
+            raise ValueError("LLM_API_KEY environment variable is not set.")
+        if not env_vars["base_url"]:
+            raise ValueError("LLM_BASE_URL environment variable is not set.")
+        
+        return {
+            "model": model,
+            "model_provider": provider,
+            "api_key": env_vars["api_key"],
+            "api_base": env_vars["base_url"]
+        }
+    else:
+        if not env_vars["api_key"]:
+            raise ValueError("LLM_API_KEY environment variable is not set.")
+        if not env_vars["base_url"]:
+            raise ValueError("LLM_API_KEY environment variable is not set.")
 
+        return {
+            "model": model,
+            "model_provider": provider,
+            "api_key": env_vars["api_key"],
+            "base_url": env_vars["base_url"]
+        }
 
-def load_chat_model(fully_specified_name: str, base_url:str) -> BaseChatModel:
-    """Load a chat model from a fully specified name.
-
-    Args:
-        fully_specified_name (str): String in the format 'provider/model'.
+def get_openai_env_vars() -> dict:
     """
-    provider, model = fully_specified_name.split("/", maxsplit=1)
-    return init_chat_model(model, model_provider=provider, base_url=base_url)
+    获取环境变量.env中OPENAI_API_KEY和OPENAI_BASE_URL的值
+    
+    Returns:
+        dict: 包含API密钥和基础URL的字典
+    """
+    # 加载.env文件中的环境变量
+    load_dotenv()
+    
+    # 获取环境变量
+    api_key = os.environ.get("LLM_API_KEY")
+    base_url = os.environ.get("LLM_BASE_URL")
+
+    return {
+        "api_key": api_key,
+        "base_url": base_url
+    }
+
+
+if __name__ == "__main__":
+    # Example usage
+    model_info = split_model_and_provider("deepseek:Qwen/Qwen3-32B")
+    print(model_info)
