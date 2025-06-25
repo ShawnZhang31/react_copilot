@@ -29,35 +29,27 @@ cp .env.example .env
 
 2. 在 `.env` 声明你的key
 
-- 主要的 [search tool](./src/react_agent/tools.py) [^1] 使用的是[Tavily](https://tavily.com/).去官方创建一个API[here](https://app.tavily.com/sign-in)，并将其添加到你的 `.env` 文件中。
+- 大模型API秘钥
 
 ```
-TAVILY_API_KEY=your-key
+LLM_API_KEY=your-key
 ```
 
-- 你可以使用自己的API来运行这个图。你需要在 `.env` 文件中添加你的API key。
+- 大模型服务的base_url
 
 ```
-OPENAI_API_KEY=your-key
+LLM_BASE_URL=your-key
 ```
 
+- 使用的大模型
+  - MODEL的格式为：{provider}:{model_name}
+  - provider可以是openai、deepseek、qwen等，model_name是具体的模型
+  - 例如：openai:qwen-plus表示使用OpenAI的qwen-plus模型
 
-### 配置模型
-
-默认的模型使用的硅基流动的qwen模型，`model` 如下所示:
-
-```yaml
-model: openai/Qwen/Qwen3-32B
+```
+MODEL=openai:qwen-plus
 ```
 
-> 主要要在模型名前面加上`openai/`前缀，以确保模型可以使用正确的Provider初始化。
-
-
-默认的模型使用的硅基流动的模型，`base_url` 如下所示:
-
-```yaml
-base_url: https://api.siliconflow.cn/v1
-```
 
 ### 运行
 一旦`.env` 文件配置完成，你就可以运行这个图了。
@@ -87,10 +79,13 @@ uv run langgraph dev
 }
 ```
 ### 2. 更新Agent要调用的工具参数
+
+**data**字段用于修改工具的参数
+
 ```json
 {
   "action": "update",
-  "data": {"query": "北京 明天 天气 空气质量 2025-05-20"}
+  "data": {"location": "北京"}
 }
 ```
 > 这里把查询广州天气的操作修改为了查询北京的
