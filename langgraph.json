@@ -3,19 +3,5 @@
   "graphs": {
     "agent": "./src/react_agent/graph.py:graph"
   },
-  "checkpointer": {
-    "ttl": {
-      "strategy": "delete",
-      "sweep_interval_minutes": 60,
-      "default_ttl": 1440
-    }
-  },
-  "store": {
-    "ttl": {
-      "refresh_on_read": true,
-      "sweep_interval_minutes": 120,
-      "default_ttl": 10080
-    }
-  },
   "env": ".env"
 }
