@@ -1,19 +1,20 @@
 import os
 from dotenv import load_dotenv
+import asyncio
 
 """Utility functions used in our graph."""
 
 
-def split_model_and_provider(fully_specified_name: str) -> dict:
+async def split_model_and_provider(fully_specified_name: str) -> dict:
     """Initialize the configured chat model."""
     if ":" in fully_specified_name:
         provider, model = fully_specified_name.split(":", maxsplit=1)
     else:
         provider = "openai"
         model = fully_specified_name
-    
-    env_vars = get_openai_env_vars()
-    
+
+    env_vars = await get_openai_env_vars()
+
     if provider == "deepseek":
         if not env_vars["api_key"]:
             raise ValueError("LLM_API_KEY environment variable is not set.")
@@ -39,7 +40,7 @@ def split_model_and_provider(fully_specified_name: str) -> dict:
             "base_url": env_vars["base_url"]
         }
 
-def get_openai_env_vars() -> dict:
+async def get_openai_env_vars() -> dict:
     """
     获取环境变量.env中OPENAI_API_KEY和OPENAI_BASE_URL的值
     
@@ -47,7 +48,7 @@ def get_openai_env_vars() -> dict:
         dict: 包含API密钥和基础URL的字典
     """
     # 加载.env文件中的环境变量
-    load_dotenv()
+    await asyncio.to_thread(load_dotenv)
     
     # 获取环境变量
     api_key = os.environ.get("LLM_API_KEY")
